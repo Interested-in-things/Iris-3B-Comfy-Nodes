@@ -734,8 +734,8 @@ class IrisDepthEstimate:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("depth", "depth_mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "IRIS_DEPTH")
+    RETURN_NAMES = ("depth", "depth_mask", "depth_3d")
     FUNCTION = "estimate"
     CATEGORY = "Iris-3B"
     DESCRIPTION = ("Iris-3B monocular depth: one model pass per image. Relative depth (not metric), "
@@ -750,7 +750,7 @@ class IrisDepthEstimate:
         mm.free_memory(dm.nbytes + 2 * GB, device)
         dm.model.to(device)
         embeddings, mask = dm.embeddings.to(device), dm.mask.to(device)
-        maps = []
+        maps, raws = [], []
         pbar = comfy.utils.ProgressBar(len(image))
         try:
             for i, frame in enumerate(image):
@@ -768,6 +768,7 @@ class IrisDepthEstimate:
                     depth = F.interpolate(depth, size=(height, width), mode="bilinear", align_corners=False)
                 # upstream colorize(): near = bright over the 2nd..98th percentile
                 d = depth[0, 0]
+                raws.append(d.cpu())
                 low, high = torch.quantile(d.flatten()[:: max(1, d.numel() // 1_000_000)], torch.tensor([0.02, 0.98], device=device))
                 maps.append(((high - d) / (high - low).clamp_min(1e-6)).clamp(0, 1).cpu())
                 pbar.update_absolute(i + 1)
@@ -785,7 +786,101 @@ class IrisDepthEstimate:
                 rgb = near[..., None].expand(-1, -1, -1, 3)
         else:
             rgb = near[..., None].expand(-1, -1, -1, 3).contiguous()
-        return (rgb, near)
+        return (rgb, near, {"log_depth": raws, "image": image[..., :3].cpu()})
+
+
+def _write_ply(path: str, xyz, rgb, faces=None) -> None:
+    """Binary little-endian PLY: float xyz, uchar rgb, optional triangle faces."""
+    import numpy as np
+
+    header = ["ply", "format binary_little_endian 1.0", f"element vertex {len(xyz)}",
+              "property float x", "property float y", "property float z",
+              "property uchar red", "property uchar green", "property uchar blue"]
+    if faces is not None:
+        header += [f"element face {len(faces)}", "property list uchar int vertex_indices"]
+    header.append("end_header")
+    vertex = np.empty(len(xyz), dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                                       ("r", "u1"), ("g", "u1"), ("b", "u1")])
+    vertex["x"], vertex["y"], vertex["z"] = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    vertex["r"], vertex["g"], vertex["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    with open(path, "wb") as f:
+        f.write(("\n".join(header) + "\n").encode("ascii"))
+        f.write(vertex.tobytes())
+        if faces is not None:
+            face = np.empty(len(faces), dtype=[("n", "u1"), ("i", "<i4", (3,))])
+            face["n"], face["i"] = 3, faces
+            f.write(face.tobytes())
+
+
+class IrisDepthTo3D:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "depth_3d": ("IRIS_DEPTH", {"tooltip": "the depth_3d output of Iris Depth"}),
+                "mode": (["point cloud", "mesh"], {
+                    "default": "point cloud",
+                    "tooltip": "mesh joins neighboring points into triangles and leaves gaps at depth edges",
+                }),
+                "fov": ("FLOAT", {"default": 60.0, "min": 10.0, "max": 150.0, "step": 1.0,
+                                  "tooltip": "assumed horizontal field of view of the photo, in degrees"}),
+                "max_points": ("INT", {"default": 500000, "min": 10000, "max": 4000000, "step": 10000,
+                                       "tooltip": "the depth map is subsampled to stay under this"}),
+                "filename_prefix": ("STRING", {"default": "iris3b_depth3d"}),
+            }
+        }
+
+    RETURN_TYPES = ("FILE_3D",)
+    RETURN_NAMES = ("model_3d",)
+    FUNCTION = "build"
+    OUTPUT_NODE = True
+    CATEGORY = "Iris-3B"
+    DESCRIPTION = ("Turns Iris depth into a colored point cloud or mesh (.ply in the output folder). "
+                   "Connect it to Preview 3D to orbit around it.")
+
+    def build(self, depth_3d, mode, fov, max_points, filename_prefix):
+        import numpy as np
+
+        log_depth, image = depth_3d["log_depth"], depth_3d["image"]
+        out_dir = folder_paths.get_output_directory()
+        full, name, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, out_dir)
+        paths = []
+        for i, d in enumerate(log_depth):
+            d = d.float().numpy()
+            h, w = d.shape
+            rgb = (image[i].float().clamp(0, 1).numpy() * 255).round().astype(np.uint8)
+            stride = max(1, int(np.ceil(np.sqrt(h * w / max_points))))
+            v, u = np.mgrid[0:h:stride, 0:w:stride]
+            # as in upstream's demo viewer: exp of relative log depth is depth up to
+            # scale, rescaled to a median of 3 for viewing
+            z = np.exp(d[v, u].astype(np.float64))
+            z = 3 * z / np.median(z)
+            f = (w / 2) / np.tan(np.radians(fov) / 2)
+            # three.js is y-up and looks down -z
+            xyz = np.stack([(u + 0.5 - w / 2) * z / f, -(v + 0.5 - h / 2) * z / f, -z], -1).reshape(-1, 3)
+            colors = rgb[v, u].reshape(-1, 3)
+            faces = None
+            if mode == "mesh":
+                gh, gw = v.shape
+                idx = np.arange(gh * gw).reshape(gh, gw)
+                a, b, c, e = idx[:-1, :-1], idx[:-1, 1:], idx[1:, :-1], idx[1:, 1:]
+                tris = np.concatenate([np.stack([a, c, b], -1).reshape(-1, 3),
+                                       np.stack([b, c, e], -1).reshape(-1, 3)])
+                zf = z.reshape(-1)[tris]
+                # drop triangles that stretch across a depth edge
+                tris = tris[zf.max(1) / zf.min(1) < 1.08]
+                faces = tris.astype(np.int32)
+            path = os.path.join(full, f"{name}_{counter + i:05}_.ply")
+            _write_ply(path, xyz.astype(np.float32), colors, faces)
+            paths.append(path)
+        log.info("wrote %s", ", ".join(paths))
+        try:
+            from comfy_api.latest import Types
+
+            model = Types.File3D(paths[0])
+        except Exception:
+            model = paths[0]
+        return (model,)
 
 
 def _previews_enabled() -> bool:
@@ -821,6 +916,7 @@ NODE_CLASS_MAPPINGS = {
     "IrisUpscale": IrisUpscale,
     "IrisDepthLoader": IrisDepthLoader,
     "IrisDepthEstimate": IrisDepthEstimate,
+    "IrisDepthTo3D": IrisDepthTo3D,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -833,4 +929,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "IrisUpscale": "Iris Upscale",
     "IrisDepthLoader": "Load Iris Depth Model",
     "IrisDepthEstimate": "Iris Depth",
+    "IrisDepthTo3D": "Iris Depth to 3D",
 }

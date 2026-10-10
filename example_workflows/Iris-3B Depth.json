@@ -1,6 +1,6 @@
 {
-  "last_node_id": 4,
-  "last_link_id": 3,
+  "last_node_id": 6,
+  "last_link_id": 5,
   "nodes": [
     {
       "id": 1,
@@ -121,6 +121,14 @@
           "type": "MASK",
           "links": [],
           "slot_index": 1
+        },
+        {
+          "name": "IRIS_DEPTH",
+          "type": "IRIS_DEPTH",
+          "links": [
+            4
+          ],
+          "slot_index": 2
         }
       ],
       "properties": {
@@ -139,8 +147,8 @@
         80
       ],
       "size": [
-        560,
-        620
+        480,
+        560
       ],
       "flags": {},
       "order": 3,
@@ -158,6 +166,170 @@
       },
       "widgets_values": [
         "iris3b_depth"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "IrisDepthTo3D",
+      "pos": [
+        420,
+        400
+      ],
+      "size": [
+        320,
+        150
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "depth_3d",
+          "type": "IRIS_DEPTH",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "FILE_3D",
+          "type": "FILE_3D",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "IrisDepthTo3D"
+      },
+      "widgets_values": [
+        "point cloud",
+        60.0,
+        500000,
+        "iris3b_depth3d"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "Preview3DAdvanced",
+      "pos": [
+        1300,
+        80
+      ],
+      "size": [
+        720,
+        720
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model_3d",
+          "type": "FILE_3D_GLB,FILE_3D_GLTF,FILE_3D_FBX,FILE_3D_OBJ,FILE_3D_STL,FILE_3D_USDZ,FILE_3D",
+          "link": 5
+        },
+        {
+          "name": "model_3d_info",
+          "type": "LOAD3D_MODEL_INFO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "camera_info",
+          "type": "LOAD3D_CAMERA",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "viewport_state",
+          "type": "LOAD_3D",
+          "link": null,
+          "widget": {
+            "name": "viewport_state"
+          }
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "width"
+          }
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "link": null,
+          "widget": {
+            "name": "height"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model_3d",
+          "type": "FILE_3D",
+          "links": [],
+          "slot_index": 0
+        },
+        {
+          "name": "model_3d_info",
+          "type": "LOAD3D_MODEL_INFO",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "camera_info",
+          "type": "LOAD3D_CAMERA",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": [],
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "Preview3DAdvanced",
+        "Camera Config": {
+          "cameraType": "perspective",
+          "fov": 35,
+          "hasCustomUp": false
+        },
+        "Light Config": {
+          "intensity": 3,
+          "hdri": {
+            "enabled": false,
+            "hdriPath": "",
+            "showAsBackground": false,
+            "intensity": 1
+          }
+        },
+        "Model Config": {
+          "upDirection": "original",
+          "materialMode": "original",
+          "showSkeleton": false
+        },
+        "Scene Config": {
+          "showGrid": false,
+          "backgroundColor": "#000000",
+          "backgroundImage": "",
+          "backgroundRenderMode": "tiled"
+        }
+      },
+      "widgets_values": [
+        "",
+        1024,
+        1024
       ]
     }
   ],
@@ -185,6 +357,22 @@
       4,
       0,
       "IMAGE"
+    ],
+    [
+      4,
+      3,
+      2,
+      5,
+      0,
+      "IRIS_DEPTH"
+    ],
+    [
+      5,
+      5,
+      0,
+      6,
+      0,
+      "FILE_3D"
     ]
   ],
   "groups": [],

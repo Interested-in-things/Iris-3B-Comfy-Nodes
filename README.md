@@ -34,7 +34,7 @@ Download one and drag it into ComfyUI, or open it from Templates once the pack i
 - [Iris-3B Text to Image (Advanced)](example_workflows/Iris-3B%20Text%20to%20Image%20%28Advanced%29.json): every sampler setting
 - [Iris-3B Image to Image](example_workflows/Iris-3B%20Image%20to%20Image.json): restyle or rework an image you load
 - [Iris-3B Upscale 4x](example_workflows/Iris-3B%20Upscale%204x.json): 4x upscale of any image
-- [Iris-3B Depth](example_workflows/Iris-3B%20Depth.json): depth map of any image
+- [Iris-3B Depth](example_workflows/Iris-3B%20Depth.json): depth map of any image, plus a 3D view you can orbit
 
 Both text-to-image workflows end with a 4x upscale group (1024 to 4096) that's bypassed by default. Select the group and press Ctrl+B to turn it on.
 
@@ -66,6 +66,7 @@ The text encoder has to be the original HF folder. Single-file or fp8 Qwen3-VL t
 - **Iris Sampler (Advanced)**: every setting: steps, cfg, seed, batch size, mode, denoise, shift, solver order, CFG interval, any width/height in multiples of 16, and keep_model_on_gpu.
 - **Load Iris Upscaler** and **Iris Upscale**: Iris fine-tuned for restoration and 4x upscaling. It's a single pass per 1024 px tile with overlapping tiles and a wavelet color fix. It works on any IMAGE, not just Iris output. With `limit_input_size` on, big inputs are shrunk first (short side 512, long side 1024), so the output stays at or under 2048x4096. Turn it off for a full 4x of any size.
 - **Load Iris Depth Model** and **Iris Depth**: Iris fine-tuned for monocular depth, one pass per image. Outputs a depth IMAGE (near = white, ready for depth ControlNets, or an inferno colormap) and the same map as a MASK. It's relative depth, not metric, scaled to each image's 2nd to 98th percentile. `max_side` caps the size the model sees (default 1024).
+- **Iris Depth to 3D**: turns the depth into a colored point cloud or mesh (`.ply` in your output folder). Connect it to ComfyUI's **Preview 3D** to orbit around it. `fov` is the photo's assumed field of view.
 
 Both samplers use DPM-Solver++ on the flow schedule. The defaults match the model card (cfg 3, shift 4). Live previews follow ComfyUI's preview setting and cost nothing, since Iris predicts pixels directly.
 
@@ -80,6 +81,10 @@ Source, then subtle (0.3), medium (0.5) and strong (0.7), prompted as an oil pai
 ### Depth
 
 ![image and its Iris depth map](assets/depth.jpg)
+
+The Depth workflow also builds a 3D point cloud and opens it in Preview 3D. Click Fit to Viewer, then drag to orbit and scroll to zoom. Photo, depth and the 3D view:
+
+![photo, depth map and 3D point cloud](assets/depth_3d.jpg)
 
 ### Upscale
 
