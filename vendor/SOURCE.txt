@@ -1,1 +1,1 @@
-vendored from github.com/speridlabs/iris-3b @ a8d1523 (src/iris3b, inference and restoration modules only; Apache-2.0)
+vendored from github.com/speridlabs/iris-3b @ a8d1523 (src/iris3b, inference, restoration and depth modules only; Apache-2.0)

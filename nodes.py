@@ -15,9 +15,11 @@ Default files, downloaded from the Hub on first use when missing:
 
     models/diffusion_models/iris-3b.safetensors            text to image
     models/diffusion_models/iris-3b-upscaler.safetensors   4x upscaler
+    models/diffusion_models/iris-3b-depth.safetensors      monocular depth
     models/text_encoders/Qwen3-VL-4B-Instruct/             whole HF repo
 
-The configs (and the upscaler's empty-prompt embedding) come with this pack. A
+The configs come with this pack; the upscaler's and depth model's empty-prompt
+embeddings (36 MB each) are fetched next to them on first use. A
 Hub-layout folder (model.safetensors next to config.yaml) also works.
 """
 
@@ -58,11 +60,12 @@ HF = "https://huggingface.co"
 # default file name -> (Hub file, bundled config)
 T2I_FILE = "iris-3b.safetensors"
 UPSCALER_FILE = "iris-3b-upscaler.safetensors"
+DEPTH_FILE = "iris-3b-depth.safetensors"
 STOCK = {
     T2I_FILE: ("model.safetensors", "iris-3b.yaml"),
     UPSCALER_FILE: ("upscaler/model.safetensors", "iris-3b-upscaler.yaml"),
+    DEPTH_FILE: ("depth/model.safetensors", "iris-3b-depth.yaml"),
 }
-UPSCALER_PROMPT = "upscaler/empty_prompt.safetensors"
 
 
 def hub_url(path: str, repo: str = IRIS_REPO) -> str:
@@ -74,15 +77,16 @@ def _empty_cache() -> None:
     mm.soft_empty_cache()
 
 
-def _iris_files(upscaler: bool) -> list[str]:
-    """Iris weights in diffusion_models: names with "iris" in them, split into
-    upscaler and text-to-image files."""
+def _iris_files(kind: str) -> list[str]:
+    """Iris weights in diffusion_models (names with "iris" in them) of one kind:
+    "t2i", "upscaler" or "depth"."""
     out = []
     for name in folder_paths.get_filename_list("diffusion_models"):
         low = name.lower().replace("\\", "/")
-        if "iris" not in low or "empty_prompt" in low or "depth" in low:
+        if "iris" not in low or "empty_prompt" in low:
             continue
-        if ("upscaler" in low) == upscaler:
+        found = "upscaler" if "upscaler" in low else "depth" if "depth" in low else "t2i"
+        if found == kind:
             out.append(name)
     return out
 
@@ -191,7 +195,7 @@ class IrisModelLoader:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model_name": (_with_default(_iris_files(upscaler=False), T2I_FILE), {
+                "model_name": (_with_default(_iris_files("t2i"), T2I_FILE), {
                     "tooltip": f"Iris-3B weights in models/diffusion_models. {T2I_FILE} is downloaded "
                                "on first use if missing (12 GB)",
                 }),
@@ -520,13 +524,14 @@ class IrisUpscaler:
         self.nbytes = _nbytes(model)
 
 
-def _upscaler_prompt(weights: str) -> str:
-    """empty_prompt.safetensors next to Hub-layout weights, else the pack's cached copy."""
+def _task_prompt(weights: str, task_dir: str) -> str:
+    """empty_prompt.safetensors next to Hub-layout weights, else the pack's cached copy
+    of ``<task_dir>/empty_prompt.safetensors`` from the Hub."""
     side = os.path.join(os.path.dirname(weights), "empty_prompt.safetensors")
     if os.path.basename(weights) == "model.safetensors" and os.path.isfile(side):
         return side
-    cached = os.path.join(NULL_CACHE_DIR, "iris-3b-upscaler_empty_prompt.safetensors")
-    return cached if os.path.isfile(cached) else _fetch(IRIS_REPO, UPSCALER_PROMPT, cached)
+    cached = os.path.join(NULL_CACHE_DIR, f"iris-3b-{task_dir}_empty_prompt.safetensors")
+    return cached if os.path.isfile(cached) else _fetch(IRIS_REPO, f"{task_dir}/empty_prompt.safetensors", cached)
 
 
 class IrisUpscalerLoader:
@@ -534,7 +539,7 @@ class IrisUpscalerLoader:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model_name": (_with_default(_iris_files(upscaler=True), UPSCALER_FILE), {
+                "model_name": (_with_default(_iris_files("upscaler"), UPSCALER_FILE), {
                     "tooltip": f"Iris upscaler weights in models/diffusion_models. {UPSCALER_FILE} is "
                                "downloaded on first use if missing (12 GB)",
                 }),
@@ -556,7 +561,7 @@ class IrisUpscalerLoader:
         model, cfg, task = _build_dit(weights, _config_path(weights, STOCK[UPSCALER_FILE][1]), dtype)
         if not task or task.get("name") != "restoration":
             raise ValueError(f"{model_name} is not an Iris restoration model")
-        prompt = load_file(_upscaler_prompt(weights))
+        prompt = load_file(_task_prompt(weights, "upscaler"))
         log.info("loaded %s as %s", model_name, weight_dtype)
         return (IrisUpscaler(model, cfg, dtype, task, prompt),)
 
@@ -661,6 +666,128 @@ class IrisUpscale:
         return (torch.stack(outputs),)
 
 
+class IrisDepthModel:
+    def __init__(self, model, cfg, dtype: torch.dtype, prompt: dict):
+        self.model, self.cfg, self.dtype = model, cfg, dtype
+        self.embeddings = prompt["embeddings"].to(dtype)
+        self.mask = prompt["mask"].bool()
+        self.nbytes = _nbytes(model)
+
+
+class IrisDepthLoader:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model_name": (_with_default(_iris_files("depth"), DEPTH_FILE), {
+                    "tooltip": f"Iris depth weights in models/diffusion_models. {DEPTH_FILE} is "
+                               "downloaded on first use if missing (12 GB)",
+                }),
+                "weight_dtype": DTYPE_INPUT,
+            }
+        }
+
+    RETURN_TYPES = ("IRIS_DEPTH_MODEL",)
+    FUNCTION = "load"
+    CATEGORY = "Iris-3B"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, model_name):
+        return True  # a missing default is downloaded by load()
+
+    def load(self, model_name, weight_dtype):
+        from iris3b.downstream.depth import IrisDepth
+
+        weights_path = _weights_path(model_name)
+        dtype = DTYPES[weight_dtype]
+        raw = OmegaConf.to_container(OmegaConf.load(_config_path(weights_path, STOCK[DEPTH_FILE][1])))
+        task = raw.pop("task", None)
+        if not task or task.get("name") != "depth":
+            raise ValueError(f"{model_name} is not an Iris depth model")
+        cfg = inference_config(raw)
+        weights = _load_weights(weights_path, dtype)
+        with torch.device("meta"):
+            model = IrisDepth(cfg.model)
+        model.num_train_timesteps = cfg.flow.num_train_timesteps
+        model.load_state_dict(weights, strict=True, assign=True)
+        del weights
+        model = model.eval().requires_grad_(False).to(dtype=dtype)
+        prompt = load_file(_task_prompt(weights_path, "depth"))
+        log.info("loaded %s as %s", model_name, weight_dtype)
+        return (IrisDepthModel(model, cfg, dtype, prompt),)
+
+
+class IrisDepthEstimate:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "depth_model": ("IRIS_DEPTH_MODEL",),
+                "image": ("IMAGE",),
+                "max_side": ("INT", {"default": 1024, "min": 0, "max": 4096, "step": 16,
+                                     "tooltip": "long side the model sees; the map is resized back to the input "
+                                                "size. 0 keeps the input size"}),
+                "colors": (["grayscale (near = white)", "inferno"], {
+                    "default": "grayscale (near = white)",
+                    "tooltip": "grayscale is what depth ControlNets expect",
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MASK")
+    RETURN_NAMES = ("depth", "depth_mask")
+    FUNCTION = "estimate"
+    CATEGORY = "Iris-3B"
+    DESCRIPTION = ("Iris-3B monocular depth: one model pass per image. Relative depth (not metric), "
+                   "scaled to each image's 2nd to 98th percentile.")
+
+    @torch.no_grad()
+    def estimate(self, depth_model, image, max_side, colors):
+        F = torch.nn.functional
+        dm = depth_model
+        device = mm.get_torch_device()
+        patch = dm.cfg.model.patch_size
+        mm.free_memory(dm.nbytes + 2 * GB, device)
+        dm.model.to(device)
+        embeddings, mask = dm.embeddings.to(device), dm.mask.to(device)
+        maps = []
+        pbar = comfy.utils.ProgressBar(len(image))
+        try:
+            for i, frame in enumerate(image):
+                mm.throw_exception_if_processing_interrupted()
+                rgb = frame[..., :3].permute(2, 0, 1)[None].to(device, torch.float32)
+                height, width = rgb.shape[-2:]
+                scale = min(1.0, max_side / max(width, height)) if max_side else 1.0
+                size = tuple(max(patch, round(side * scale / patch) * patch) for side in (height, width))
+                if size != (height, width):
+                    rgb = F.interpolate(rgb, size=size, mode="bicubic", align_corners=False, antialias=True)
+                rgb = rgb.clamp(0, 1) * 2 - 1
+                with torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
+                    depth = dm.model(rgb.to(dm.dtype), embeddings, mask).float()
+                if depth.shape[-2:] != (height, width):
+                    depth = F.interpolate(depth, size=(height, width), mode="bilinear", align_corners=False)
+                # upstream colorize(): near = bright over the 2nd..98th percentile
+                d = depth[0, 0]
+                low, high = torch.quantile(d.flatten()[:: max(1, d.numel() // 1_000_000)], torch.tensor([0.02, 0.98], device=device))
+                maps.append(((high - d) / (high - low).clamp_min(1e-6)).clamp(0, 1).cpu())
+                pbar.update_absolute(i + 1)
+        finally:
+            dm.model.to("cpu")
+            _empty_cache()
+        near = torch.stack(maps)
+        if colors == "inferno":
+            try:
+                from matplotlib import colormaps
+
+                rgb = torch.from_numpy(colormaps["inferno"](near.numpy())[..., :3]).float()
+            except ImportError:
+                log.warning("matplotlib is missing, using grayscale")
+                rgb = near[..., None].expand(-1, -1, -1, 3)
+        else:
+            rgb = near[..., None].expand(-1, -1, -1, 3).contiguous()
+        return (rgb, near)
+
+
 def _previews_enabled() -> bool:
     try:
         from comfy.cli_args import LatentPreviewMethod, args
@@ -692,6 +819,8 @@ NODE_CLASS_MAPPINGS = {
     "IrisSamplerAdvanced": IrisSamplerAdvanced,
     "IrisUpscalerLoader": IrisUpscalerLoader,
     "IrisUpscale": IrisUpscale,
+    "IrisDepthLoader": IrisDepthLoader,
+    "IrisDepthEstimate": IrisDepthEstimate,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -702,4 +831,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "IrisSamplerAdvanced": "Iris Sampler (Advanced)",
     "IrisUpscalerLoader": "Load Iris Upscaler",
     "IrisUpscale": "Iris Upscale",
+    "IrisDepthLoader": "Load Iris Depth Model",
+    "IrisDepthEstimate": "Iris Depth",
 }
