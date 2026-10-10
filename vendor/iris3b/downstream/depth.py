@@ -56,7 +56,7 @@ class DepthPredictor:
         model.num_train_timesteps = cfg.flow.num_train_timesteps
         model.load_state_dict(weights, strict=True, assign=True)
         # FP32 weights; inference runs under BF16 autocast
-        self.model = model.eval().requires_grad_(False).to(self.device, torch.float32)
+        self.model = model.train(False).requires_grad_(False).to(self.device, torch.float32)
         self.embeddings = prompt["embeddings"].to(self.device, torch.float32)
         self.mask = prompt["mask"].to(self.device, torch.bool)
         self.patch = cfg.model.patch_size

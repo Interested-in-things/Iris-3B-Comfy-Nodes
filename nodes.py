@@ -164,7 +164,7 @@ def _build_dit(weights_path: str, config_path: str, dtype: torch.dtype) -> tuple
         model = IrisDiT(cfg.model)
     model.load_state_dict(weights, strict=True, assign=True)
     del weights
-    return model.eval().requires_grad_(False).to(dtype=dtype), cfg, task
+    return model.train(False).requires_grad_(False).to(dtype=dtype), cfg, task
 
 
 def _nbytes(module: torch.nn.Module) -> int:
@@ -711,7 +711,7 @@ class IrisDepthLoader:
         model.num_train_timesteps = cfg.flow.num_train_timesteps
         model.load_state_dict(weights, strict=True, assign=True)
         del weights
-        model = model.eval().requires_grad_(False).to(dtype=dtype)
+        model = model.train(False).requires_grad_(False).to(dtype=dtype)
         prompt = load_file(_task_prompt(weights_path, "depth"))
         log.info("loaded %s as %s", model_name, weight_dtype)
         return (IrisDepthModel(model, cfg, dtype, prompt),)

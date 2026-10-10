@@ -106,10 +106,8 @@ class Qwen3VLTextEncoder(TextEncoder):
                     f"[1, {num_hidden_layers}], got {list(self.hidden_layers)}"
                 )
 
-        self.decoder = decoder.to(self.device).eval()
+        self.decoder = decoder.to(self.device).train(False)
         self.decoder.requires_grad_(False)
-        if cfg.compile:
-            self.decoder.compile()
 
     def _tokenize_captions(self, prompts: list[str]) -> list[list[int]]:
         """Tokenize captions alone and account for anything past the budget."""

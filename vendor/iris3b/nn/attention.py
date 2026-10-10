@@ -1,7 +1,6 @@
 """Attention layers with a pluggable kernel backend."""
 
 from functools import cache
-from importlib import import_module
 
 import torch
 import torch.nn.functional as F
@@ -13,21 +12,17 @@ from iris3b.nn.rope import apply_rope
 
 ATTENTION_BACKENDS = ("sdpa", "torch_flash", "torch_cudnn", "fa3", "fa4")
 
-_EXTERNAL_MODULES = {
-    "fa3": "flash_attn_3.flash_attn_interface",
-    "fa4": "flash_attn.cute",
-}
-
-
 @cache
 def _external_attention_func(backend: str):
-    module_name = _EXTERNAL_MODULES[backend]
+    # optional FlashAttention 3/4 kernels (Hopper/Blackwell only); ComfyUI uses "sdpa"
     try:
-        return import_module(module_name).flash_attn_func
+        if backend == "fa3":
+            from flash_attn_3.flash_attn_interface import flash_attn_func
+        else:
+            from flash_attn.cute import flash_attn_func
     except (ImportError, OSError) as exc:
-        raise RuntimeError(
-            f"attention backend '{backend}' is unavailable: cannot import {module_name}"
-        ) from exc
+        raise RuntimeError(f"attention backend '{backend}' is unavailable: {exc}") from exc
+    return flash_attn_func
 
 
 def _validate_external_attention(
