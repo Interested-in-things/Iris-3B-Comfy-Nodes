@@ -9,7 +9,12 @@ ComfyUI nodes for [Iris-3B](https://huggingface.co/speridlabs/iris-3b), a 3B pix
   <img src="assets/bottle.png" width="49%" alt="galaxy in a bottle">
 </p>
 
-Left: 832x1216 at 50 steps, then the 4x upscaler (3328x4864). Right: ComfyUI's classic bottle prompt. Drag [`fox_girl.png`](assets/fox_girl.png) or [`bottle.png`](assets/bottle.png) into ComfyUI to get the exact graph, prompt and seed.
+<p align="center">
+  <img src="assets/fox_girl_depth.png" width="49%" alt="depth map of the fox girl, grayscale">
+  <img src="assets/bottle_depth.png" width="49%" alt="depth map of the bottle, inferno colors">
+</p>
+
+Top left: 832x1216 at 50 steps, then the 4x upscaler (3328x4864). Top right: ComfyUI's classic bottle prompt. Bottom: their depth maps from the Iris depth model, grayscale and inferno. Every PNG here has its workflow embedded, so drag [`fox_girl.png`](assets/fox_girl.png), [`bottle.png`](assets/bottle.png), [`fox_girl_depth.png`](assets/fox_girl_depth.png) or [`bottle_depth.png`](assets/bottle_depth.png) into ComfyUI to get the exact graph and settings.
 
 ## Install
 
