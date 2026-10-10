@@ -1,0 +1,14 @@
+[project]
+name = "iris-3b-comfy-nodes"
+description = "Nodes for Iris-3B, a 3B pixel-space text-to-image model, plus its 4x upscaler. Simple and advanced samplers, auto model download, low VRAM."
+version = "1.0.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/bani4kaskashka/Iris-3B-Comfy-Nodes"
+"Bug Tracker" = "https://github.com/bani4kaskashka/Iris-3B-Comfy-Nodes/issues"
+
+[tool.comfy]
+PublisherId = "ca11mebucky"
+DisplayName = "Iris-3B"
