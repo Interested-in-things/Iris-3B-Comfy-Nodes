@@ -2,7 +2,14 @@
 
 ComfyUI nodes for [Iris-3B](https://huggingface.co/speridlabs/iris-3b), a 3B pixel-space text-to-image model from Sperid Labs, plus its 4x upscaler. Iris has no VAE, so everything goes straight to IMAGE.
 
-Tested on an AMD RX 9060 XT (16 GB, ROCm on Windows). It should work the same on NVIDIA.
+**Fast:** about 1.5x faster than the other Iris node pack on a fresh start, and 4x to 9x faster on repeat runs on a 16 GB card, using about 5 GB less VRAM. [Numbers below.](#speed)
+
+<p align="center">
+  <img src="assets/fox_girl_4x.jpg" width="49%" alt="fox girl holding a sign, upscaled 4x">
+  <img src="assets/bottle.png" width="49%" alt="galaxy in a bottle">
+</p>
+
+Left: 832x1216 at 50 steps, then the 4x upscaler (3328x4864). Right: ComfyUI's classic bottle prompt. Drag [`fox_girl.png`](assets/fox_girl.png) or [`bottle.png`](assets/bottle.png) into ComfyUI to get the exact graph, prompt and seed.
 
 ## Install
 
@@ -20,6 +27,7 @@ Download one and drag it into ComfyUI, or open it from Templates once the pack i
 
 - [Iris-3B Text to Image (Simple)](example_workflows/Iris-3B%20Text%20to%20Image%20%28Simple%29.json): resolution and quality presets
 - [Iris-3B Text to Image (Advanced)](example_workflows/Iris-3B%20Text%20to%20Image%20%28Advanced%29.json): every sampler setting
+- [Iris-3B Image to Image](example_workflows/Iris-3B%20Image%20to%20Image.json): restyle or rework an image you load
 - [Iris-3B Upscale 4x](example_workflows/Iris-3B%20Upscale%204x.json): 4x upscale of any image
 
 Both text-to-image workflows end with a 4x upscale group (1024 to 4096) that's bypassed by default. Select the group and press Ctrl+B to turn it on.
@@ -47,17 +55,38 @@ The text encoder has to be the original HF folder. Single-file or fp8 Qwen3-VL t
 - **Load Iris-3B Model**: loads the DiT. `bf16` uses 6 GB of VRAM. `fp32` is the shipped precision but needs a lot more than 16 GB.
 - **Load Iris Text Encoder (Qwen3-VL-4B)**: lists HF folders in `text_encoders`.
 - **Iris Text Encode**: positive and negative prompt. Leave the negative empty to use the null prompt the model was trained with.
-- **Iris Sampler (Simple)**: dropdowns for resolution (1 MP sizes from 21:9 to 9:21), quality (fast = 30 steps, balanced = 50, best = 100) and prompt adherence (cfg 2, 3 or 4.5), plus seed and batch size.
-- **Iris Sampler (Advanced)**: every setting: steps, cfg, seed, batch size, shift, solver order, CFG interval, any width/height in multiples of 16, and keep_model_on_gpu.
+- **Iris Sampler (Simple)**: mode (text to image or image to image), resolution (1 MP sizes from 21:9 to 9:21, or match the input image), quality (fast = 30 steps, balanced = 50, best = 100), prompt adherence (cfg 2, 3 or 4.5), image strength (denoise 0.3, 0.5 or 0.7), seed and batch size.
+- **Iris Sampler (Advanced)**: every setting: steps, cfg, seed, batch size, mode, denoise, shift, solver order, CFG interval, any width/height in multiples of 16, and keep_model_on_gpu.
 - **Load Iris Upscaler** and **Iris Upscale**: Iris fine-tuned for restoration and 4x upscaling. It's a single pass per 1024 px tile with overlapping tiles and a wavelet color fix. It works on any IMAGE, not just Iris output. With `limit_input_size` on, big inputs are shrunk first (short side 512, long side 1024), so the output stays at or under 2048x4096. Turn it off for a full 4x of any size.
 
 Both samplers use DPM-Solver++ on the flow schedule. The defaults match the model card (cfg 3, shift 4). Live previews follow ComfyUI's preview setting and cost nothing, since Iris predicts pixels directly.
 
-## VRAM and speed
+### Image to image
 
-Each model visits the GPU only for its own step and sits in system RAM otherwise, so peak VRAM is about 8 GB. Expect to need around 22 GB of free system RAM with all three models loaded.
+Set the sampler's mode to image to image and connect an IMAGE. The image is noised partway and diffused back, so lower strength keeps more of it. It takes the same time as a normal run with the same steps.
 
-On a 9060 XT, a 1024x1024 image takes about 1.8 s per step. 4x upscaling 1024x1024 to 4096x4096 is 49 tiles.
+Source, then subtle (0.3), medium (0.5) and strong (0.7), prompted as an oil painting:
+
+![source, then denoise 0.3, 0.5 and 0.7](assets/image_to_image.jpg)
+
+### Upscale
+
+Bicubic on the left, Iris 4x on the right:
+
+![bicubic vs Iris 4x](assets/upscale.jpg)
+
+## Speed
+
+Measured on an RX 9060 XT (16 GB, ROCm on Windows), 1 MP images, against [the other Iris node pack](https://github.com/envy-ai/ComfyUI-Iris) with its default settings:
+
+| | This pack | Other pack |
+|---|---|---|
+| First run | 1.8 s/step | 2.8 s/step |
+| Second run | 1.8 s/step | 7.3 s/step |
+| Third run | 1.8 s/step | 16.4 s/step |
+| Peak VRAM | 7.7 GB | 12.5 GB |
+
+Each model here visits the GPU only for its own step and sits in system RAM otherwise, so nothing piles up and spills over on a 16 GB card. Expect to need around 22 GB of free system RAM with all three models loaded. 4x upscaling 1024 to 4096 is 49 tiles, about 47 s.
 
 On AMD, start ComfyUI the normal way (`main.py`), which turns on the AOTriton flash attention kernels. Without them attention falls back to a slow path.
 

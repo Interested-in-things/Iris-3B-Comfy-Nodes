@@ -289,6 +289,7 @@ class IrisTextEncode:
         return (result,)
 
 
+MATCH_IMAGE = "match input image (about 1 MP)"
 # name -> (width, height); all about one megapixel, the resolution Iris was fine-tuned at
 RESOLUTIONS = {
     "1:1 square (1024x1024)": (1024, 1024),
@@ -305,6 +306,32 @@ RESOLUTIONS = {
 }
 QUALITY = {"fast (30 steps)": 30, "balanced (50 steps)": 50, "best (100 steps)": 100}
 GUIDANCE = {"loose (cfg 2)": 2.0, "normal (cfg 3)": 3.0, "strict (cfg 4.5)": 4.5}
+MODES = ["text to image", "image to image"]
+STRENGTH = {"subtle (denoise 0.3)": 0.3, "medium (denoise 0.5)": 0.5, "strong (denoise 0.7)": 0.7}
+MODE_INPUT = (MODES, {"default": "text to image",
+                      "tooltip": "image to image starts from the connected image instead of pure noise"})
+IMAGE_INPUT = ("IMAGE", {"tooltip": "source for image to image (ignored in text to image)"})
+
+
+def _round16(v: float) -> int:
+    return max(256, int(round(v / 16)) * 16)
+
+
+def prepare_image(image: torch.Tensor, width: int | None, height: int | None) -> torch.Tensor:
+    """IMAGE [B, H, W, C] in 0..1 -> [B, 3, H, W] in -1..1. With a target size the image
+    is scaled to cover it and center-cropped; without one it keeps its aspect ratio at
+    about one megapixel."""
+    F = torch.nn.functional
+    x = image[..., :3].permute(0, 3, 1, 2).float()
+    h, w = x.shape[-2:]
+    if width is None or height is None:
+        scale = (1024 * 1024 / (h * w)) ** 0.5
+        width, height = _round16(w * scale), _round16(h * scale)
+    scale = max(width / w, height / h)
+    size = (max(height, round(h * scale)), max(width, round(w * scale)))
+    x = F.interpolate(x, size=size, mode="bicubic", align_corners=False, antialias=True)
+    top, left = (size[0] - height) // 2, (size[1] - width) // 2
+    return (x[..., top:top + height, left:left + width].clamp(0, 1) * 2 - 1).contiguous()
 
 SEED = ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF, "control_after_generate": True})
 BATCH = ("INT", {"default": 1, "min": 1, "max": 8, "tooltip": "images per run"})
@@ -312,7 +339,15 @@ BATCH = ("INT", {"default": 1, "min": 1, "max": 8, "tooltip": "images per run"})
 
 @torch.no_grad()
 def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size,
-                shift=4.0, solver_order=2, cfg_start=0.0, cfg_end=1.0, keep_model_on_gpu=False):
+                shift=4.0, solver_order=2, cfg_start=0.0, cfg_end=1.0, keep_model_on_gpu=False,
+                init_image=None, denoise=1.0):
+    """``init_image`` ([B, 3, H, W] in -1..1) turns this into image to image: the run
+    takes the last ``steps`` steps of a ``steps / denoise`` grid, starting from the
+    image noised to that grid's first level. A batch of one image is repeated."""
+    if init_image is not None:
+        height, width = init_image.shape[-2:]
+        if init_image.shape[0] > 1:
+            batch_size = init_image.shape[0]
     p = model.cfg.model.patch_size
     if width % p or height % p:
         raise ValueError(f"width and height must be multiples of {p}")
@@ -332,6 +367,8 @@ def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size
     # same noise as scripts/sample.py for a given seed (drawn on the GPU)
     generator = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(batch_size, model.cfg.model.in_channels, height, width, generator=generator, device=device)
+    img2img = init_image is not None and denoise < 1.0
+    total = max(steps, round(steps / max(denoise, 1e-3))) if img2img else steps
 
     def model_fn(xin, t_model, y):
         mm.throw_exception_if_processing_interrupted()
@@ -351,7 +388,11 @@ def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size
     try:
         with autocast:
             # FlowDPMSolver.sample() with a per-step callback; x0 is already an image
-            grid = solver.time_grid(steps, shift)
+            grid = solver.time_grid(total, shift)[-(steps + 1):]
+            if img2img:
+                t0 = grid[0]
+                image = init_image.to(device, torch.float32).expand(batch_size, -1, -1, -1)
+                x = (1.0 - t0) * image + t0 * x
             history = []
             for i in range(1, steps + 1):
                 s, t = grid[i - 1], grid[i]
@@ -381,14 +422,24 @@ class IrisSamplerSimple:
             "required": {
                 "model": ("IRIS_MODEL",),
                 "conditioning": ("IRIS_CONDITIONING",),
-                "resolution": (list(RESOLUTIONS), {"default": "1:1 square (1024x1024)"}),
+                "mode": MODE_INPUT,
+                "resolution": ([MATCH_IMAGE] + list(RESOLUTIONS), {
+                    "default": "1:1 square (1024x1024)",
+                    "tooltip": "in image to image the input is cropped to this size, or keeps its own "
+                               "aspect ratio with match input image",
+                }),
                 "quality": (list(QUALITY), {"default": "fast (30 steps)",
                                             "tooltip": "100 steps is the model card default, about 3x slower than fast"}),
                 "prompt_adherence": (list(GUIDANCE), {"default": "normal (cfg 3)",
                                                       "tooltip": "how strictly the image follows the prompt"}),
+                "image_strength": (list(STRENGTH), {
+                    "default": "medium (denoise 0.5)",
+                    "tooltip": "image to image only: how much the image may change",
+                }),
                 "seed": SEED,
                 "batch_size": BATCH,
-            }
+            },
+            "optional": {"image": IMAGE_INPUT},
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -396,10 +447,19 @@ class IrisSamplerSimple:
     CATEGORY = "Iris-3B"
     DESCRIPTION = "Iris-3B sampler with presets. Use the Advanced sampler for exact sizes and solver settings."
 
-    def sample(self, model, conditioning, resolution, quality, prompt_adherence, seed, batch_size):
-        width, height = RESOLUTIONS[resolution]
+    def sample(self, model, conditioning, mode, resolution, quality, prompt_adherence, image_strength, seed,
+               batch_size, image=None):
+        init = None
+        if mode == "image to image":
+            if image is None:
+                raise ValueError("image to image needs an image connected to the sampler")
+            size = (None, None) if resolution == MATCH_IMAGE else RESOLUTIONS[resolution]
+            init = prepare_image(image, *size)
+            width, height = init.shape[-1], init.shape[-2]
+        else:
+            width, height = RESOLUTIONS.get(resolution, (1024, 1024))
         images = run_sampler(model, conditioning, width, height, QUALITY[quality], GUIDANCE[prompt_adherence],
-                             seed, batch_size)
+                             seed, batch_size, init_image=init, denoise=STRENGTH[image_strength])
         return (images,)
 
 
@@ -414,27 +474,39 @@ class IrisSamplerAdvanced:
                 "cfg": ("FLOAT", {"default": 3.0, "min": 1.0, "max": 20.0, "step": 0.1}),
                 "seed": SEED,
                 "batch_size": BATCH,
+                "mode": MODE_INPUT,
+                "denoise": ("FLOAT", {"default": 0.5, "min": 0.01, "max": 1.0, "step": 0.01,
+                                      "tooltip": "image to image only: 1 ignores the image content, lower "
+                                                 "values keep more of it"}),
                 "shift": ("FLOAT", {"default": 4.0, "min": 0.1, "max": 20.0, "step": 0.1,
                                     "tooltip": "flow shift (trained with 4.0)"}),
                 "solver_order": ("INT", {"default": 2, "min": 1, "max": 2, "tooltip": "DPM-Solver++ order"}),
                 "cfg_start": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01,
                                         "tooltip": "CFG applies only for noise levels t in (cfg_start, cfg_end); 1 = pure noise"}),
                 "cfg_end": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 16}),
+                "width": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 16,
+                                  "tooltip": "in image to image the input is scaled and cropped to this size"}),
                 "height": ("INT", {"default": 1024, "min": 256, "max": 2048, "step": 16}),
                 "keep_model_on_gpu": ("BOOLEAN", {"default": False,
                                                   "tooltip": "skip moving the 6 GB DiT back to RAM after sampling"}),
             },
+            "optional": {"image": IMAGE_INPUT},
         }
 
     RETURN_TYPES = ("IMAGE",)
     FUNCTION = "sample"
     CATEGORY = "Iris-3B"
 
-    def sample(self, model, conditioning, steps, cfg, seed, batch_size, shift, solver_order,
-               cfg_start, cfg_end, width, height, keep_model_on_gpu):
+    def sample(self, model, conditioning, steps, cfg, seed, batch_size, mode, denoise, shift, solver_order,
+               cfg_start, cfg_end, width, height, keep_model_on_gpu, image=None):
+        init = None
+        if mode == "image to image":
+            if image is None:
+                raise ValueError("image to image needs an image connected to the sampler")
+            init = prepare_image(image, width, height)
         images = run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size,
-                             shift, solver_order, cfg_start, cfg_end, keep_model_on_gpu)
+                             shift, solver_order, cfg_start, cfg_end, keep_model_on_gpu,
+                             init_image=init, denoise=denoise)
         return (images,)
 
 

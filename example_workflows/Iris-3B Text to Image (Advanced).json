@@ -122,7 +122,7 @@
       ],
       "size": [
         320,
-        380
+        430
       ],
       "flags": {},
       "order": 3,
@@ -137,6 +137,11 @@
           "name": "conditioning",
           "type": "IRIS_CONDITIONING",
           "link": 3
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": null
         }
       ],
       "outputs": [
@@ -159,6 +164,8 @@
         0,
         "randomize",
         1,
+        "text to image",
+        0.5,
         4.0,
         2,
         0.0,
