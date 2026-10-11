@@ -17,17 +17,21 @@ Default files, downloaded from the Hub on first use when missing:
     models/diffusion_models/iris-3b-upscaler.safetensors   4x upscaler
     models/diffusion_models/iris-3b-depth.safetensors      monocular depth
     models/text_encoders/Qwen3-VL-4B-Instruct/             whole HF repo
+    models/loras/iris-3b-turbo-r2-1000.safetensors         4-step Turbo LoRA (optional)
 
 The configs come with this pack; the upscaler's and depth model's empty-prompt
 embeddings (36 MB each) are fetched next to them on first use. A
 Hub-layout folder (model.safetensors next to config.yaml) also works.
 """
 
+import copy
 import dataclasses
 import gc
+import json
 import logging
 import os
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
@@ -40,6 +44,7 @@ import comfy.utils
 import folder_paths
 
 from bucky_iris3b.config import inference_config
+from bucky_iris3b.flow.schedule import shift_sigma
 from bucky_iris3b.flow.solver import FlowDPMSolver
 from bucky_iris3b.models.dit import IrisDiT
 from bucky_iris3b.text.base import TextEncoding
@@ -182,6 +187,32 @@ class IrisModel:
     def __init__(self, model: IrisDiT, cfg, dtype: torch.dtype, name: str):
         self.model, self.cfg, self.dtype, self.name = model, cfg, dtype, name
         self.nbytes = _nbytes(model)
+        # {"layers": {prefix: (down, up)}, "scale": float, "meta": dict} from Load Iris Turbo LoRA
+        self.lora = None
+
+
+@contextmanager
+def _live_lora(model: "IrisModel", device):
+    """Adds the attached LoRA to its Linear layers for the length of a run with forward
+    hooks, so the cached base weights are never modified and no second copy is made."""
+    if not model.lora:
+        yield
+        return
+    scale, handles = model.lora["scale"], []
+    try:
+        for prefix, (down, up) in model.lora["layers"].items():
+            linear = model.model.get_submodule(prefix)
+            d = down.to(device, model.dtype)
+            u = (up * scale).to(device, model.dtype)
+
+            def hook(_module, args, out, d=d, u=u):
+                return out + ((args[0].to(d.dtype) @ d.t()) @ u.t()).to(out.dtype)
+
+            handles.append(linear.register_forward_hook(hook))
+        yield
+    finally:
+        for h in handles:
+            h.remove()
 
 
 class IrisTextEncoder:
@@ -352,6 +383,8 @@ def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size
         height, width = init_image.shape[-2:]
         if init_image.shape[0] > 1:
             batch_size = init_image.shape[0]
+    if model.lora and model.lora["meta"].get("turbo_steps"):
+        raise ValueError("this model has a Turbo LoRA attached: connect it to Iris Sampler (Turbo) instead")
     p = model.cfg.model.patch_size
     if width % p or height % p:
         raise ValueError(f"width and height must be multiples of {p}")
@@ -511,6 +544,136 @@ class IrisSamplerAdvanced:
         images = run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size,
                              shift, solver_order, cfg_start, cfg_end, keep_model_on_gpu,
                              init_image=init, denoise=denoise)
+        return (images,)
+
+
+TURBO_REPO = "pentacoxian-dev/iris-3b-turbo-lora"
+TURBO_FILES = {
+    "iris-3b-turbo-r2-1000.safetensors": "r2-1000/student.safetensors",
+    "iris-3b-turbo-r1-1500.safetensors": "r1-1500/student.safetensors",
+}
+TURBO_DEFAULT = "iris-3b-turbo-r2-1000.safetensors"
+
+
+def _turbo_files() -> list[str]:
+    found = [f for f in folder_paths.get_filename_list("loras") if "iris" in f.lower() and "turbo" in f.lower()]
+    return [TURBO_DEFAULT] + [f for f in found if f != TURBO_DEFAULT] if TURBO_DEFAULT in found else found
+
+
+class IrisTurboLoRA:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("IRIS_MODEL",),
+                "lora_name": (_turbo_files(), {
+                    "tooltip": f"Iris Turbo LoRA in models/loras. {TURBO_DEFAULT} (recommended) and "
+                               "iris-3b-turbo-r1-1500.safetensors are downloaded on first use if missing (460 MB)",
+                }),
+                "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
+            }
+        }
+
+    RETURN_TYPES = ("IRIS_MODEL",)
+    FUNCTION = "load"
+    CATEGORY = "Iris-3B"
+    DESCRIPTION = ("4-step Turbo LoRA for Iris-3B (DMD2 distillation by pentaCoxian). Guidance is baked in, "
+                   "so use it with Iris Sampler (Turbo).")
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, lora_name):
+        return True  # a missing stock file is downloaded by load()
+
+    def load(self, model, lora_name, strength):
+        path = folder_paths.get_full_path("loras", lora_name)
+        if not path:
+            if lora_name not in TURBO_FILES:
+                raise FileNotFoundError(f"{lora_name} not found in models/loras")
+            target = os.path.join(folder_paths.get_folder_paths("loras")[0], lora_name)
+            path = _fetch(TURBO_REPO, TURBO_FILES[lora_name], target)
+        with safe_open(path, framework="pt") as f:
+            raw = f.metadata() or {}
+        if "rank" not in raw or "alpha" not in raw:
+            raise ValueError(f"{lora_name} is not an Iris Turbo LoRA (no rank/alpha metadata)")
+        meta = {"rank": int(raw["rank"]), "alpha": float(raw["alpha"]), **json.loads(raw.get("extra") or "{}")}
+        tensors = load_file(path)
+        layers = {}
+        for key in tensors:
+            if not key.endswith(".lora_down"):
+                continue
+            prefix = key[: -len(".lora_down")]
+            try:
+                linear = model.model.get_submodule(prefix)
+            except AttributeError as exc:
+                raise ValueError(f"{lora_name} targets {prefix}, which this Iris model lacks") from exc
+            if not isinstance(linear, torch.nn.Linear):
+                raise ValueError(f"{lora_name}: {prefix} is not a Linear layer")
+            up = tensors[prefix + ".lora_up"]
+            if up.abs().max() == 0:
+                continue  # the released adapters carry all-zero adaLN-core pairs
+            layers[prefix] = (tensors[key], up)
+        out = copy.copy(model)  # shares the cached DiT; the LoRA only applies inside the sampler
+        out.lora = {"layers": layers, "scale": strength * meta["alpha"] / meta["rank"], "meta": meta}
+        log.info("Turbo LoRA %s: %d layers, %s steps", lora_name, len(layers), meta.get("turbo_steps"))
+        return (out,)
+
+
+class IrisSamplerTurbo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("IRIS_MODEL", {"tooltip": "an Iris model with Load Iris Turbo LoRA applied"}),
+                "conditioning": ("IRIS_CONDITIONING", {"tooltip": "only the positive prompt is used: guidance is baked in"}),
+                "resolution": (list(RESOLUTIONS), {"default": "1:1 square (1024x1024)",
+                                                   "tooltip": "the Turbo LoRA was trained at about one megapixel"}),
+                "steps": ("INT", {"default": 4, "min": 1, "max": 16,
+                                  "tooltip": "the LoRA was distilled for 4 (one model pass each)"}),
+                "seed": SEED,
+                "batch_size": BATCH,
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "sample"
+    CATEGORY = "Iris-3B"
+    DESCRIPTION = "Few-step sampler for the Iris Turbo LoRA: one model pass per step, no CFG."
+
+    @torch.no_grad()
+    def sample(self, model, conditioning, resolution, steps, seed, batch_size):
+        if not (model.lora and model.lora["meta"].get("turbo_steps")):
+            raise ValueError("Iris Sampler (Turbo) needs a model from Load Iris Turbo LoRA")
+        width, height = RESOLUTIONS[resolution]
+        shift = float(model.lora["meta"].get("shift", 4.0))
+        device = mm.get_torch_device()
+        dit, dtype = model.model, model.dtype
+        mm.free_memory(model.nbytes + int(1.5 * GB * batch_size), device)
+        dit.to(device)
+        cond = conditioning["cond"].embeddings.to(device, dtype)
+        cond = cond.expand(batch_size, *([-1] * (cond.ndim - 1)))
+        mask = conditioning["cond"].mask.to(device).expand(batch_size, -1)
+        # upstream turbo schedule: evenly spaced flow times from pure noise, shifted
+        times = shift_sigma(1.0 - torch.arange(steps, dtype=torch.float64) / steps, shift).tolist()
+        generator = torch.Generator(device=device).manual_seed(seed)
+        x = torch.randn(batch_size, model.cfg.model.in_channels, height, width, generator=generator, device=device)
+        previews, pbar = _previews_enabled(), comfy.utils.ProgressBar(steps)
+        autocast = torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda")
+        try:
+            with autocast, _live_lora(model, device):
+                for i, t in enumerate(times):
+                    mm.throw_exception_if_processing_interrupted()
+                    t_model = torch.full((batch_size,), t * model.cfg.flow.num_train_timesteps, device=device)
+                    v = dit(x.to(dtype), t_model, cond, y_mask=mask).x.float()
+                    x0 = x - t * v
+                    if i + 1 < len(times):
+                        # predict the clean image, then re-noise it with fresh noise to the next time
+                        fresh = torch.randn(x.shape, generator=generator, device=device)
+                        x = (1.0 - times[i + 1]) * x0 + times[i + 1] * fresh
+                    pbar.update_absolute(i + 1, steps, _preview(x0) if previews and i + 1 < steps else None)
+            images = ((x0.clamp(-1, 1) + 1) / 2).permute(0, 2, 3, 1).float().cpu()
+        finally:
+            dit.to("cpu")
+            _empty_cache()
         return (images,)
 
 
@@ -912,6 +1075,8 @@ NODE_CLASS_MAPPINGS = {
     "IrisTextEncode": IrisTextEncode,
     "IrisSamplerSimple": IrisSamplerSimple,
     "IrisSamplerAdvanced": IrisSamplerAdvanced,
+    "IrisTurboLoRA": IrisTurboLoRA,
+    "IrisSamplerTurbo": IrisSamplerTurbo,
     "IrisUpscalerLoader": IrisUpscalerLoader,
     "IrisUpscale": IrisUpscale,
     "IrisDepthLoader": IrisDepthLoader,
@@ -925,6 +1090,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "IrisTextEncode": "Iris Text Encode",
     "IrisSamplerSimple": "Iris Sampler (Simple)",
     "IrisSamplerAdvanced": "Iris Sampler (Advanced)",
+    "IrisTurboLoRA": "Load Iris Turbo LoRA",
+    "IrisSamplerTurbo": "Iris Sampler (Turbo)",
     "IrisUpscalerLoader": "Load Iris Upscaler",
     "IrisUpscale": "Iris Upscale",
     "IrisDepthLoader": "Load Iris Depth Model",
