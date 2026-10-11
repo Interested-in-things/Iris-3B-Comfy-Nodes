@@ -37,7 +37,7 @@ Search for **Iris-3B** in ComfyUI-Manager, or clone into `ComfyUI/custom_nodes`:
 git clone https://github.com/bani4kaskashka/Iris-3B-Comfy-Nodes
 ```
 
-Nothing else to install. It needs transformers 4.57 or newer, which recent ComfyUI already has.
+ComfyUI-Manager installs the one extra package (`omegaconf`) for you. If you cloned it, run `pip install -r requirements.txt` in ComfyUI's Python. It also needs transformers 4.57 or newer, which recent ComfyUI already has.
 
 ## Workflows
 
