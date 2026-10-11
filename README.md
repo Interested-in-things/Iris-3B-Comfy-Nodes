@@ -1,5 +1,17 @@
 # Iris-3B Comfy Nodes
 
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/Install-2b3137?style=for-the-badge" alt="Install"></a>
+  <a href="#workflows"><img src="https://img.shields.io/badge/Workflows-2b3137?style=for-the-badge" alt="Workflows"></a>
+  <a href="#models"><img src="https://img.shields.io/badge/Models-2b3137?style=for-the-badge" alt="Models"></a>
+  <a href="#nodes"><img src="https://img.shields.io/badge/Nodes-2b3137?style=for-the-badge" alt="Nodes"></a>
+  <a href="#image-to-image"><img src="https://img.shields.io/badge/Image_to_image-2b3137?style=for-the-badge" alt="Image to image"></a>
+  <a href="#depth"><img src="https://img.shields.io/badge/Depth_and_3D-2b3137?style=for-the-badge" alt="Depth and 3D"></a>
+  <a href="#upscale"><img src="https://img.shields.io/badge/Upscale-2b3137?style=for-the-badge" alt="Upscale"></a>
+  <a href="#speed"><img src="https://img.shields.io/badge/Speed-2b3137?style=for-the-badge" alt="Speed"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/Contributing-2b3137?style=for-the-badge" alt="Contributing"></a>
+</p>
+
 ComfyUI nodes for [Iris-3B](https://huggingface.co/speridlabs/iris-3b), a 3B pixel-space text-to-image model from Sperid Labs, plus its 4x upscaler and depth model. Iris has no VAE, so everything goes straight to IMAGE.
 
 **Fast:** about 1.5x faster than the other Iris node pack on a fresh start, and 4x to 9x faster on repeat runs on a 16 GB card, using about 5 GB less VRAM. [Numbers below.](#speed)
