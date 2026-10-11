@@ -187,28 +187,65 @@ class IrisModel:
     def __init__(self, model: IrisDiT, cfg, dtype: torch.dtype, name: str):
         self.model, self.cfg, self.dtype, self.name = model, cfg, dtype, name
         self.nbytes = _nbytes(model)
-        # {"layers": {prefix: (down, up)}, "scale": float, "meta": dict} from Load Iris Turbo LoRA
-        self.lora = None
+        # [{"layers": {prefix: (down, up)}, "scale": float, "meta": dict}, ...] from the LoRA loaders
+        self.loras = []
+
+
+def _is_turbo(model: "IrisModel") -> bool:
+    return any(lora["meta"].get("turbo_steps") for lora in model.loras)
+
+
+def _read_lora(model: "IrisModel", path: str, name: str, strength: float) -> dict:
+    """An Iris LoRA file ("<layer>.lora_down" / "<layer>.lora_up" with rank/alpha metadata)."""
+    with safe_open(path, framework="pt") as f:
+        raw = f.metadata() or {}
+    if "rank" not in raw or "alpha" not in raw:
+        raise ValueError(f"{name} is not an Iris LoRA (no rank/alpha metadata)")
+    meta = {"rank": int(raw["rank"]), "alpha": float(raw["alpha"]), **json.loads(raw.get("extra") or "{}")}
+    tensors = load_file(path)
+    layers = {}
+    for key in tensors:
+        if not key.endswith(".lora_down"):
+            continue
+        prefix = key[: -len(".lora_down")]
+        try:
+            linear = model.model.get_submodule(prefix)
+        except AttributeError as exc:
+            raise ValueError(f"{name} targets {prefix}, which this Iris model lacks") from exc
+        if not isinstance(linear, torch.nn.Linear):
+            raise ValueError(f"{name}: {prefix} is not a Linear layer")
+        up = tensors[prefix + ".lora_up"]
+        if up.abs().max() == 0:
+            continue  # e.g. the all-zero adaLN-core pairs in the Turbo releases
+        layers[prefix] = (tensors[key], up)
+    return {"layers": layers, "scale": strength * meta["alpha"] / meta["rank"], "meta": meta, "name": name}
+
+
+def _with_lora(model: "IrisModel", lora: dict) -> "IrisModel":
+    out = copy.copy(model)  # shares the cached DiT; LoRAs only apply inside the samplers
+    out.loras = [*model.loras, lora]
+    return out
 
 
 @contextmanager
 def _live_lora(model: "IrisModel", device):
-    """Adds the attached LoRA to its Linear layers for the length of a run with forward
+    """Adds the attached LoRAs to their Linear layers for the length of a run with forward
     hooks, so the cached base weights are never modified and no second copy is made."""
-    if not model.lora:
-        yield
-        return
-    scale, handles = model.lora["scale"], []
+    handles = []
     try:
-        for prefix, (down, up) in model.lora["layers"].items():
-            linear = model.model.get_submodule(prefix)
-            d = down.to(device, model.dtype)
-            u = (up * scale).to(device, model.dtype)
+        for lora in model.loras:
+            scale = lora["scale"]
+            if scale == 0:
+                continue
+            for prefix, (down, up) in lora["layers"].items():
+                linear = model.model.get_submodule(prefix)
+                d = down.to(device, model.dtype)
+                u = (up * scale).to(device, model.dtype)
 
-            def hook(_module, args, out, d=d, u=u):
-                return out + ((args[0].to(d.dtype) @ d.t()) @ u.t()).to(out.dtype)
+                def hook(_module, args, out, d=d, u=u):
+                    return out + ((args[0].to(d.dtype) @ d.t()) @ u.t()).to(out.dtype)
 
-            handles.append(linear.register_forward_hook(hook))
+                handles.append(linear.register_forward_hook(hook))
         yield
     finally:
         for h in handles:
@@ -383,7 +420,7 @@ def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size
         height, width = init_image.shape[-2:]
         if init_image.shape[0] > 1:
             batch_size = init_image.shape[0]
-    if model.lora and model.lora["meta"].get("turbo_steps"):
+    if _is_turbo(model):
         raise ValueError("this model has a Turbo LoRA attached: connect it to Iris Sampler (Turbo) instead")
     p = model.cfg.model.patch_size
     if width % p or height % p:
@@ -423,7 +460,7 @@ def run_sampler(model, conditioning, width, height, steps, cfg, seed, batch_size
     pbar = comfy.utils.ProgressBar(steps)
     autocast = torch.autocast(device.type, dtype=torch.bfloat16, enabled=device.type == "cuda")
     try:
-        with autocast:
+        with autocast, _live_lora(model, device):
             # FlowDPMSolver.sample() with a per-step callback; x0 is already an image
             grid = solver.time_grid(total, shift)[-(steps + 1):]
             if img2img:
@@ -560,6 +597,29 @@ def _turbo_files() -> list[str]:
     return [TURBO_DEFAULT] + [f for f in found if f != TURBO_DEFAULT] if TURBO_DEFAULT in found else found
 
 
+class IrisLoRA:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("IRIS_MODEL",),
+                "lora_name": (folder_paths.get_filename_list("loras"), {
+                    "tooltip": "an Iris LoRA in models/loras (made with iris-3b LoRA trainers)"}),
+                "strength": ("FLOAT", {"default": 1.0, "min": -2.0, "max": 3.0, "step": 0.05}),
+            }
+        }
+
+    RETURN_TYPES = ("IRIS_MODEL",)
+    FUNCTION = "load"
+    CATEGORY = "Iris-3B"
+    DESCRIPTION = "Adds an Iris LoRA to the model. Chain several of these to stack LoRAs."
+
+    def load(self, model, lora_name, strength):
+        lora = _read_lora(model, folder_paths.get_full_path_or_raise("loras", lora_name), lora_name, strength)
+        log.info("LoRA %s: %d layers at strength %g", lora_name, len(lora["layers"]), strength)
+        return (_with_lora(model, lora),)
+
+
 class IrisTurboLoRA:
     @classmethod
     def INPUT_TYPES(cls):
@@ -591,31 +651,11 @@ class IrisTurboLoRA:
                 raise FileNotFoundError(f"{lora_name} not found in models/loras")
             target = os.path.join(folder_paths.get_folder_paths("loras")[0], lora_name)
             path = _fetch(TURBO_REPO, TURBO_FILES[lora_name], target)
-        with safe_open(path, framework="pt") as f:
-            raw = f.metadata() or {}
-        if "rank" not in raw or "alpha" not in raw:
-            raise ValueError(f"{lora_name} is not an Iris Turbo LoRA (no rank/alpha metadata)")
-        meta = {"rank": int(raw["rank"]), "alpha": float(raw["alpha"]), **json.loads(raw.get("extra") or "{}")}
-        tensors = load_file(path)
-        layers = {}
-        for key in tensors:
-            if not key.endswith(".lora_down"):
-                continue
-            prefix = key[: -len(".lora_down")]
-            try:
-                linear = model.model.get_submodule(prefix)
-            except AttributeError as exc:
-                raise ValueError(f"{lora_name} targets {prefix}, which this Iris model lacks") from exc
-            if not isinstance(linear, torch.nn.Linear):
-                raise ValueError(f"{lora_name}: {prefix} is not a Linear layer")
-            up = tensors[prefix + ".lora_up"]
-            if up.abs().max() == 0:
-                continue  # the released adapters carry all-zero adaLN-core pairs
-            layers[prefix] = (tensors[key], up)
-        out = copy.copy(model)  # shares the cached DiT; the LoRA only applies inside the sampler
-        out.lora = {"layers": layers, "scale": strength * meta["alpha"] / meta["rank"], "meta": meta}
-        log.info("Turbo LoRA %s: %d layers, %s steps", lora_name, len(layers), meta.get("turbo_steps"))
-        return (out,)
+        lora = _read_lora(model, path, lora_name, strength)
+        if not lora["meta"].get("turbo_steps"):
+            raise ValueError(f"{lora_name} is not a Turbo LoRA; use Load Iris LoRA for regular ones")
+        log.info("Turbo LoRA %s: %d layers, %s steps", lora_name, len(lora["layers"]), lora["meta"]["turbo_steps"])
+        return (_with_lora(model, lora),)
 
 
 class IrisSamplerTurbo:
@@ -641,10 +681,11 @@ class IrisSamplerTurbo:
 
     @torch.no_grad()
     def sample(self, model, conditioning, resolution, steps, seed, batch_size):
-        if not (model.lora and model.lora["meta"].get("turbo_steps")):
+        turbo = next((lora for lora in model.loras if lora["meta"].get("turbo_steps")), None)
+        if turbo is None:
             raise ValueError("Iris Sampler (Turbo) needs a model from Load Iris Turbo LoRA")
         width, height = RESOLUTIONS[resolution]
-        shift = float(model.lora["meta"].get("shift", 4.0))
+        shift = float(turbo["meta"].get("shift", 4.0))
         device = mm.get_torch_device()
         dit, dtype = model.model, model.dtype
         mm.free_memory(model.nbytes + int(1.5 * GB * batch_size), device)
@@ -1075,6 +1116,7 @@ NODE_CLASS_MAPPINGS = {
     "IrisTextEncode": IrisTextEncode,
     "IrisSamplerSimple": IrisSamplerSimple,
     "IrisSamplerAdvanced": IrisSamplerAdvanced,
+    "IrisLoRA": IrisLoRA,
     "IrisTurboLoRA": IrisTurboLoRA,
     "IrisSamplerTurbo": IrisSamplerTurbo,
     "IrisUpscalerLoader": IrisUpscalerLoader,
@@ -1090,6 +1132,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "IrisTextEncode": "Iris Text Encode",
     "IrisSamplerSimple": "Iris Sampler (Simple)",
     "IrisSamplerAdvanced": "Iris Sampler (Advanced)",
+    "IrisLoRA": "Load Iris LoRA",
     "IrisTurboLoRA": "Load Iris Turbo LoRA",
     "IrisSamplerTurbo": "Iris Sampler (Turbo)",
     "IrisUpscalerLoader": "Load Iris Upscaler",

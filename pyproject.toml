@@ -1,7 +1,7 @@
 [project]
 name = "iris-3b-comfy-nodes"
 description = "Nodes for Iris-3B, a 3B pixel-space text-to-image model, plus its 4x upscaler and depth model with a 3D view. Simple, advanced and 4-step Turbo samplers, image to image, auto model download, low VRAM."
-version = "1.4.1"
+version = "1.5.0"
 license = { file = "LICENSE" }
 dependencies = ["omegaconf>=2.3"]
 
