@@ -9,12 +9,12 @@ RMSNorm normalizes each branch before it enters the residual stream.
 import torch
 from torch import nn
 
-from iris3b.nn.attention import scaled_dot_product
-from iris3b.nn.mlp import SwiGLU
-from iris3b.nn.modulation import ModulationBuilder, modulate
-from iris3b.nn.norms import RMSNorm
-from iris3b.nn.rope import apply_rope
-from iris3b.registry import BLOCKS
+from bucky_iris3b.nn.attention import scaled_dot_product
+from bucky_iris3b.nn.mlp import SwiGLU
+from bucky_iris3b.nn.modulation import ModulationBuilder, modulate
+from bucky_iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.rope import apply_rope
+from bucky_iris3b.registry import BLOCKS
 
 
 @BLOCKS.register("single_stream")

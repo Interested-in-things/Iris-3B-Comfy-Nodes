@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from PIL import Image, ImageOps
 from torch import nn
 
-from iris3b.config import ModelConfig
-from iris3b.downstream import load_export
-from iris3b.models.dit import IrisDiT
+from bucky_iris3b.config import ModelConfig
+from bucky_iris3b.downstream import load_export
+from bucky_iris3b.models.dit import IrisDiT
 
 
 def _widen(linear: nn.Linear, in_features: int) -> nn.Linear:

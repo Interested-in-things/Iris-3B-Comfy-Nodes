@@ -10,7 +10,7 @@ post-modulation PiT pixel stage at patch size 16.
 
 from dataclasses import replace
 
-from iris3b.config import ModelConfig
+from bucky_iris3b.config import ModelConfig
 
 PRESETS: dict[str, ModelConfig] = {"iris-3b": ModelConfig()}
 

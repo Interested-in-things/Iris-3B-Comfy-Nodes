@@ -1,4 +1,5 @@
-"""Iris-3B text-to-image for ComfyUI. The model code under vendor/ is upstream's (Apache-2.0)."""
+"""Iris-3B text-to-image for ComfyUI. The model code in vendor/bucky_iris3b is upstream's iris3b
+package (Apache-2.0), renamed so it can't clash with other Iris packs that bundle their own copy."""
 
 import os
 import sys

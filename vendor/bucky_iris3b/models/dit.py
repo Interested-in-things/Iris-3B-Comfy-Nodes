@@ -14,10 +14,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from iris3b.config import ModelConfig
-from iris3b.models import ac
-from iris3b.models.blocks.pit import PiTBlock
-from iris3b.nn.embeddings import (
+from bucky_iris3b.config import ModelConfig
+from bucky_iris3b.models import ac
+from bucky_iris3b.models.blocks.pit import PiTBlock
+from bucky_iris3b.nn.embeddings import (
     LayerwiseTextEmbedder,
     PatchEmbedder,
     PixelEmbedder,
@@ -25,10 +25,10 @@ from iris3b.nn.embeddings import (
     TimestepEmbedder,
     TransformerTextEmbedder,
 )
-from iris3b.nn.modulation import ModulationBuilder
-from iris3b.nn.norms import RMSNorm
-from iris3b.nn.rope import rope_1d, rope_2d
-from iris3b.registry import BLOCKS
+from bucky_iris3b.nn.modulation import ModulationBuilder
+from bucky_iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.rope import rope_1d, rope_2d
+from bucky_iris3b.registry import BLOCKS
 
 
 def _caller_site() -> str:

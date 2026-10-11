@@ -2,7 +2,7 @@
 
 import torch
 
-from iris3b.registry import TIMESTEP_SAMPLERS
+from bucky_iris3b.registry import TIMESTEP_SAMPLERS
 
 
 @TIMESTEP_SAMPLERS.register("logit_normal")

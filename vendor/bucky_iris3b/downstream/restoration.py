@@ -26,8 +26,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageOps
 
-from iris3b.downstream import load_export
-from iris3b.models.dit import IrisDiT
+from bucky_iris3b.downstream import load_export
+from bucky_iris3b.models.dit import IrisDiT
 
 # colour fix: a-trous binomial pyramid, effective radius 16 px
 _DILATIONS = (1, 2, 4, 8, 16)

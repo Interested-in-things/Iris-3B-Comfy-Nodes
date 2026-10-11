@@ -1,5 +1,5 @@
-from iris3b.nn.attention import JointAttention, SelfAttention, scaled_dot_product
-from iris3b.nn.embeddings import (
+from bucky_iris3b.nn.attention import JointAttention, SelfAttention, scaled_dot_product
+from bucky_iris3b.nn.embeddings import (
     LayerwiseAttentionBlock,
     LayerwiseTextEmbedder,
     PatchEmbedder,
@@ -10,10 +10,10 @@ from iris3b.nn.embeddings import (
     TransformerTextEmbedder,
     sincos_pos_embed_2d,
 )
-from iris3b.nn.mlp import GeluMLP, SwiGLU
-from iris3b.nn.modulation import modulate
-from iris3b.nn.norms import RMSNorm
-from iris3b.nn.rope import apply_rope, rope_1d, rope_2d
+from bucky_iris3b.nn.mlp import GeluMLP, SwiGLU
+from bucky_iris3b.nn.modulation import modulate
+from bucky_iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.rope import apply_rope, rope_1d, rope_2d
 
 __all__ = [
     "GeluMLP",

@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 import torch
 
-from iris3b.flow.schedule import shift_sigma
+from bucky_iris3b.flow.schedule import shift_sigma
 
 # model(x, t_model, y) -> velocity or clean image, where t_model = 1000 * t
 ModelFn = Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]

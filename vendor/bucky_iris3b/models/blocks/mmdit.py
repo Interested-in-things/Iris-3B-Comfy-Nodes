@@ -9,11 +9,11 @@ variant is instantiated per stream, because dual-stream keeps separate weights.
 import torch
 from torch import nn
 
-from iris3b.nn.attention import JointAttention
-from iris3b.nn.mlp import SwiGLU
-from iris3b.nn.modulation import ModulationBuilder, modulate
-from iris3b.nn.norms import RMSNorm
-from iris3b.registry import BLOCKS
+from bucky_iris3b.nn.attention import JointAttention
+from bucky_iris3b.nn.mlp import SwiGLU
+from bucky_iris3b.nn.modulation import ModulationBuilder, modulate
+from bucky_iris3b.nn.norms import RMSNorm
+from bucky_iris3b.registry import BLOCKS
 
 
 @BLOCKS.register("mmdit")

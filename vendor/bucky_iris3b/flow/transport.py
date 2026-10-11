@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 import torch
 
-import iris3b.flow.timesteps  # noqa: F401  (registers samplers)
-from iris3b.config import FlowConfig
-from iris3b.flow.schedule import FlowSchedule, resolution_shift
-from iris3b.registry import TIMESTEP_SAMPLERS
+import bucky_iris3b.flow.timesteps  # noqa: F401  (registers samplers)
+from bucky_iris3b.config import FlowConfig
+from bucky_iris3b.flow.schedule import FlowSchedule, resolution_shift
+from bucky_iris3b.registry import TIMESTEP_SAMPLERS
 
 
 @dataclass

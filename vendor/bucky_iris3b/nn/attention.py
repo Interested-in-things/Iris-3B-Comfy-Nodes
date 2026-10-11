@@ -7,8 +7,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from iris3b.nn.norms import RMSNorm
-from iris3b.nn.rope import apply_rope
+from bucky_iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.rope import apply_rope
 
 ATTENTION_BACKENDS = ("sdpa", "torch_flash", "torch_cudnn", "fa3", "fa4")
 

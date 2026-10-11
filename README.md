@@ -107,6 +107,12 @@ Each model here visits the GPU only for its own step and sits in system RAM othe
 
 On AMD, start ComfyUI the normal way (`main.py`), which turns on the AOTriton flash attention kernels. Without them attention falls back to a slow path.
 
+## Contributing
+
+Got a fix, a new feature or support for another Iris model? Open a pull request here instead of starting a separate repo. This pack is the one on ComfyUI-Manager and the Comfy Registry, so anything merged here reaches everyone who has it installed with their next update, and people don't have to pick between packs that conflict with each other.
+
+Bug reports and ideas go in [issues](https://github.com/bani4kaskashka/Iris-3B-Comfy-Nodes/issues).
+
 ## Credits
 
-The model code in `vendor/iris3b` is from [speridlabs/iris-3b](https://github.com/speridlabs/iris-3b) (Apache-2.0, see `vendor/LICENSE` and `vendor/NOTICE`). Only the inference parts are included. This pack is also Apache-2.0.
+Made by Bucky ([bani4kaskashka](https://github.com/bani4kaskashka)). The model code in `vendor/bucky_iris3b` is from [speridlabs/iris-3b](https://github.com/speridlabs/iris-3b) (Apache-2.0, see `vendor/LICENSE` and `vendor/NOTICE`), renamed so it can't clash with other packs that bundle their own copy. Only the inference parts are included. This pack is also Apache-2.0; if you redistribute it or build on it, keep the `LICENSE` and `NOTICE` files.

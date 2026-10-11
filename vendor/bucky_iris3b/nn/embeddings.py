@@ -5,9 +5,9 @@ import math
 import torch
 from torch import nn
 
-from iris3b.nn.attention import SelfAttention
-from iris3b.nn.mlp import SwiGLU
-from iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.attention import SelfAttention
+from bucky_iris3b.nn.mlp import SwiGLU
+from bucky_iris3b.nn.norms import RMSNorm
 
 
 class TimestepEmbedder(nn.Module):

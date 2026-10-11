@@ -39,11 +39,11 @@ import comfy.model_management as mm
 import comfy.utils
 import folder_paths
 
-from iris3b.config import inference_config
-from iris3b.flow.solver import FlowDPMSolver
-from iris3b.models.dit import IrisDiT
-from iris3b.text.base import TextEncoding
-from iris3b.text.qwen3_vl import Qwen3VLTextEncoder
+from bucky_iris3b.config import inference_config
+from bucky_iris3b.flow.solver import FlowDPMSolver
+from bucky_iris3b.models.dit import IrisDiT
+from bucky_iris3b.text.base import TextEncoding
+from bucky_iris3b.text.qwen3_vl import Qwen3VLTextEncoder
 
 log = logging.getLogger("ComfyUI-Iris3B")
 
@@ -593,7 +593,7 @@ class IrisUpscale:
 
     @torch.no_grad()
     def upscale(self, upscaler, image, scale, limit_input_size, color_fix):
-        from iris3b.downstream.restoration import gaussian_window, tile_positions, wavelet_color_fix
+        from bucky_iris3b.downstream.restoration import gaussian_window, tile_positions, wavelet_color_fix
 
         F = torch.nn.functional
         device = mm.get_torch_device()
@@ -696,7 +696,7 @@ class IrisDepthLoader:
         return True  # a missing default is downloaded by load()
 
     def load(self, model_name, weight_dtype):
-        from iris3b.downstream.depth import IrisDepth
+        from bucky_iris3b.downstream.depth import IrisDepth
 
         weights_path = _weights_path(model_name)
         dtype = DTYPES[weight_dtype]

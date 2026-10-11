@@ -15,7 +15,7 @@ from pathlib import Path
 
 import torch
 
-from iris3b.config import inference_config
+from bucky_iris3b.config import inference_config
 
 
 def load_export(source: str | Path, task: str) -> tuple[object, dict, dict[str, torch.Tensor], dict]:

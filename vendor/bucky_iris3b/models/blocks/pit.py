@@ -22,10 +22,10 @@ Two modulation layouts:
 import torch
 from torch import nn
 
-from iris3b.nn.attention import SelfAttention
-from iris3b.nn.mlp import GeluMLP
-from iris3b.nn.modulation import modulate
-from iris3b.nn.norms import RMSNorm
+from bucky_iris3b.nn.attention import SelfAttention
+from bucky_iris3b.nn.mlp import GeluMLP
+from bucky_iris3b.nn.modulation import modulate
+from bucky_iris3b.nn.norms import RMSNorm
 
 
 class PiTBlock(nn.Module):

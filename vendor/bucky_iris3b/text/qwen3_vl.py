@@ -5,9 +5,9 @@ from pathlib import Path
 
 import torch
 
-from iris3b.config import TextEncoderConfig
-from iris3b.registry import TEXT_ENCODERS
-from iris3b.text.base import TextEncoder, TextEncoding
+from bucky_iris3b.config import TextEncoderConfig
+from bucky_iris3b.registry import TEXT_ENCODERS
+from bucky_iris3b.text.base import TextEncoder, TextEncoding
 
 # Text-conditioning chat template. Only the language stack is used; no image
 # placeholders or pixel values enter this encoder.
